@@ -16,4 +16,4 @@ Experimenting with different Golang concurrency patterns
 
 - [ ] sync.Cond
 - [ ] sync.Once
-- [ ] context.Context
+- [x] context.Context

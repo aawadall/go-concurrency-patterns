@@ -477,14 +477,148 @@ Worker 1: Request 1 |====| Request 16 |====| ... (slow pace, sleeping between re
 - System must be self-regulating
 - Running long-lived services
 
+## 5. Pipelines Pattern
+
+### Overview
+The Pipelines pattern enables multi-stage concurrent data processing workflows. Each stage operates independently with its own worker pool, allowing efficient transformation of data through sequential stages with bounded resource usage.
+
+### Architecture
+```mermaid
+graph LR
+    Source["Data<br/>Source"]
+
+    Stage1["Stage 1<br/>N Workers"]
+    Stage2["Stage 2<br/>M Workers"]
+    StageN["Stage N<br/>K Workers"]
+
+    Output["Output<br/>Results"]
+
+    Source -->|Input Channel| Stage1
+    Stage1 -->|Output Channel| Stage2
+    Stage2 -->|Output Channel| StageN
+    StageN -->|Output Channel| Output
+```
+
+### Implementation
+```go
+// Message wraps data with metadata
+type Message[T any] struct {
+    ID      int64
+    Payload T
+}
+
+// Stage defines a processing stage with workers
+type Stage[I any, O any] struct {
+    Name     string
+    Workers  int
+    Buffer   int
+    Function func(Message[I]) (Message[O], error)
+}
+
+// Example: Pipeline with type transformations
+input := make(chan Message[int])
+
+squareStage := Stage[int, int]{
+    Workers: 3,
+    Buffer:  4,
+    Function: func(msg Message[int]) (Message[int], error) {
+        return Message[int]{ID: msg.ID, Payload: msg.Payload * msg.Payload}, nil
+    },
+}
+
+doubleStage := Stage[int, int]{
+    Workers: 2,
+    Buffer:  4,
+    Function: func(msg Message[int]) (Message[int], error) {
+        return Message[int]{ID: msg.ID, Payload: msg.Payload * 2}, nil
+    },
+}
+
+// Wire stages together
+out1, g1 := squareStage.Run(ctx, input)
+out2, g2 := doubleStage.Run(ctx, out1)
+
+// Wait for completion
+go func() {
+    _ = g1.Wait()
+    _ = g2.Wait()
+}()
+
+// Consume results
+for result := range out2 {
+    fmt.Printf("[%d]: %d\n", result.ID, result.Payload)
+}
+```
+
+### Key Components
+- **Message[T]:** Generic message wrapper with ID and payload
+- **Stage[I,O]:** Type-safe processing stage with input/output types
+- **Workers:** Bounded worker pool per stage (default: configurable)
+- **Run():** Executes stage, returns output channel and error group
+- **Composition:** Chainable stages for multi-step pipelines
+
+### Characteristics
+- **Goroutines:** W₁ + W₂ + ... + Wₙ (bounded to sum of all workers)
+- **Channels:** Multiple (one per stage boundary)
+- **Memory Usage:** Low (fixed number of goroutines)
+- **Concurrency:** Bounded per stage
+- **Type Safety:** Full generic type checking
+
+### Advantages
+- ✓ Type-safe transformations with generics
+- ✓ Excellent memory efficiency (bounded goroutines)
+- ✓ Composable and chainable stages
+- ✓ Independent stage configuration
+- ✓ Perfect for large dataset processing
+- ✓ Scalable to many requests
+- ✓ Context-aware cancellation
+
+### Disadvantages
+- ✗ More complex setup than WaitGroup
+- ✗ Requires understanding of generics
+- ✗ Per-stage configuration overhead
+- ✗ Bottleneck stage limits throughput
+
+### Use Cases
+- ETL (Extract, Transform, Load) pipelines
+- Stream processing with multiple transformations
+- Batch processing with sequential stages
+- Log processing and analysis
+- Image/media processing pipelines
+- Data validation and enrichment workflows
+
+### Execution Timeline
+```
+Input: 1..10
+Stage 1 (Square, 3 workers):
+  W1: [1→1] [4→16] [7→49]  ...
+  W2: [2→4] [5→25] [8→64]  ...
+  W3: [3→9] [6→36] [9→81]  ...
+
+Stage 2 (Double, 2 workers):
+  W1: [1→2] [4→8] [7→14]   ...
+  W2: [9→18] [25→50] [36→72] ...
+
+Output: [1]:2, [2]:8, [3]:18, [4]:32, ...
+```
+
+### Performance Characteristics
+- **Throughput:** Limited by slowest stage (bottleneck)
+- **Latency:** Sum of all stage latencies
+- **Memory:** O(total_workers × goroutine_stack_size)
+- **Scalability:** Linear with message count, constant with worker count
+
+---
+
 ## Concurrency Primitives Used
 
-| Pattern | WaitGroup | Channels | Goroutines | Mutex | Context |
-|---------|-----------|----------|-----------|-------|---------|
-| Sequential | ✗ | ✗ | ✗ | ✗ | ✗ |
-| WaitGroup | ✓ | ✗ | ✓ | ✗ | ✗ |
-| FanOutIn | ✗ | ✓ | ✓ | ✗ | ✗ |
-| FanOutInWBP | ✗ | ✓ | ✓ | ✗ | ✗ |
+| Pattern | WaitGroup | Channels | Goroutines | Mutex | Context | Generics |
+|---------|-----------|----------|-----------|-------|---------|----------|
+| Sequential | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| WaitGroup | ✓ | ✗ | ✓ | ✗ | ✗ | ✗ |
+| FanOutIn | ✗ | ✓ | ✓ | ✗ | ✗ | ✗ |
+| FanOutInWBP | ✗ | ✓ | ✓ | ✗ | ✗ | ✗ |
+| Pipelines | ✗ | ✓ | ✓ | ✗ | ✓ | ✓ |
 
 ## Performance Metrics Comparison
 
