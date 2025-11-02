@@ -1,3 +1,7 @@
 module github.com/aawadall/go-concurrency-patterns
 
-go 1.22.2
+go 1.24.0
+
+toolchain go1.24.9
+
+require golang.org/x/sync v0.17.0

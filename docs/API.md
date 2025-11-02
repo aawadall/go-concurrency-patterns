@@ -451,6 +451,265 @@ if status == 200 {
 
 ---
 
+---
+
+## Pipelines Package (`cmd/pipelines/pipeline/`)
+
+### Types
+
+#### `Message[T]`
+
+Generic message wrapper for data flowing through the pipeline.
+
+```go
+type Message[T any] struct {
+    ID      int64  // Unique message identifier for tracking
+    Payload T      // Generic payload of any type
+}
+```
+
+**Generic Parameter `T`:**
+- Can be any Go type: `int`, `string`, `struct`, etc.
+- Type-safe at compile time
+- Example: `Message[int]`, `Message[User]`, `Message[[]float64]`
+
+**Fields:**
+- **ID:** Unique identifier for message tracking and correlation across stages
+- **Payload:** The actual data being processed (generic type)
+
+**Example:**
+```go
+// Integer message
+msg := Message[int]{ID: 1, Payload: 42}
+
+// String message
+msg := Message[string]{ID: 2, Payload: "hello"}
+
+// Struct message
+type User struct {
+    ID   int
+    Name string
+}
+msg := Message[User]{ID: 3, Payload: User{1, "Alice"}}
+```
+
+#### `Stage[I, O]`
+
+Configurable processing stage with type-safe input/output transformation.
+
+```go
+type Stage[I any, O any] struct {
+    Name     string                                  // Stage identifier
+    Workers  int                                     // Number of concurrent workers
+    Buffer   int                                     // Channel buffer size
+    Function func(Message[I]) (Message[O], error)   // Transformation function
+}
+```
+
+**Generic Parameters:**
+- `I` - Input message type (what this stage consumes)
+- `O` - Output message type (what this stage produces)
+- Enables type-safe transformations (e.g., `Stage[int, string]`)
+
+**Fields:**
+- **Name:** Human-readable identifier for logging and debugging
+- **Workers:** Number of concurrent goroutines (worker pool size)
+- **Buffer:** Buffered channel capacity (prevents blocking and deadlocks)
+- **Function:** User-defined transformation function
+
+**Default Values:**
+- Workers: Configurable (typically 2-8)
+- Buffer: Configurable (typically 10-100)
+
+**Example:**
+```go
+// Simple stage: int → int
+squareStage := Stage[int, int]{
+    Name:    "Square",
+    Workers: 3,
+    Buffer:  4,
+    Function: func(msg Message[int]) (Message[int], error) {
+        return Message[int]{
+            ID:      msg.ID,
+            Payload: msg.Payload * msg.Payload,
+        }, nil
+    },
+}
+
+// Type-transforming stage: int → string
+toStringStage := Stage[int, string]{
+    Name:    "ToString",
+    Workers: 2,
+    Buffer:  4,
+    Function: func(msg Message[int]) (Message[string], error) {
+        return Message[string]{
+            ID:      msg.ID,
+            Payload: fmt.Sprintf("%d", msg.Payload),
+        }, nil
+    },
+}
+```
+
+### Functions
+
+#### `Stage[I, O].Run(ctx context.Context, input <-chan Message[I]) (<-chan Message[O], *errgroup.Group)`
+
+Executes the stage with concurrent workers.
+
+**Parameters:**
+- `ctx` (context.Context) - For cancellation and deadline support
+- `input` (<-chan Message[I]) - Read-only input channel
+
+**Returns:**
+- `<-chan Message[O]` - Output channel for downstream stages
+- `*errgroup.Group` - For managing worker goroutines and collecting errors
+
+**Behavior:**
+1. Creates output channel with configured buffer size
+2. Spawns N worker goroutines (where N = `Workers`)
+3. Each worker reads from input channel and applies transformation
+4. Workers respect context cancellation
+5. Results sent to output channel
+6. Output channel automatically closes when all workers complete
+7. Error group manages synchronization and error collection
+
+**Example:**
+```go
+ctx := context.Background()
+input := make(chan Message[int])
+
+stage := Stage[int, int]{
+    Name:    "Process",
+    Workers: 3,
+    Buffer:  4,
+    Function: func(msg Message[int]) (Message[int], error) {
+        return Message[int]{ID: msg.ID, Payload: msg.Payload * 2}, nil
+    },
+}
+
+// Run stage
+output, eg := stage.Run(ctx, input)
+
+// Send data
+go func() {
+    for i := 1; i <= 10; i++ {
+        input <- Message[int]{ID: int64(i), Payload: i}
+    }
+    close(input)
+}()
+
+// Consume results
+for result := range output {
+    fmt.Printf("[%d]: %d\n", result.ID, result.Payload)
+}
+
+// Wait for completion
+if err := eg.Wait(); err != nil {
+    log.Printf("Error: %v", err)
+}
+```
+
+**Error Handling:**
+- Transformation function can return errors
+- Errors are collected in error group
+- Error group's Wait() returns first error encountered (if any)
+
+**Context Support:**
+- Respects context cancellation (context.Done())
+- Respects context deadlines
+- Workers exit gracefully on cancellation
+
+**Example with timeout:**
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+output, eg := stage.Run(ctx, input)
+// If processing exceeds 5 seconds, context cancels remaining work
+```
+
+### Complete Pipeline Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/aawadall/go-concurrency-patterns/cmd/pipelines/pipeline"
+)
+
+func main() {
+    ctx := context.Background()
+
+    // Create input data
+    input := make(chan pipeline.Message[int])
+    go func() {
+        for i := 1; i <= 10; i++ {
+            input <- pipeline.Message[int]{ID: int64(i), Payload: i}
+        }
+        close(input)
+    }()
+
+    // Stage 1: Square numbers
+    square := pipeline.Stage[int, int]{
+        Name:    "Square",
+        Workers: 3,
+        Buffer:  4,
+        Function: func(msg pipeline.Message[int]) (pipeline.Message[int], error) {
+            return pipeline.Message[int]{
+                ID:      msg.ID,
+                Payload: msg.Payload * msg.Payload,
+            }, nil
+        },
+    }
+
+    // Stage 2: Double result
+    double := pipeline.Stage[int, int]{
+        Name:    "Double",
+        Workers: 2,
+        Buffer:  4,
+        Function: func(msg pipeline.Message[int]) (pipeline.Message[int], error) {
+            return pipeline.Message[int]{
+                ID:      msg.ID,
+                Payload: msg.Payload * 2,
+            }, nil
+        },
+    }
+
+    // Wire stages
+    out1, g1 := square.Run(ctx, input)
+    out2, g2 := double.Run(ctx, out1)
+
+    // Wait for completion
+    go func() {
+        _ = g1.Wait()
+        _ = g2.Wait()
+    }()
+
+    // Consume results
+    for result := range out2 {
+        fmt.Printf("[%d]: %d\n", result.ID, result.Payload)
+    }
+}
+```
+
+**Output:**
+```
+[1]: 2
+[2]: 8
+[3]: 18
+[4]: 32
+[5]: 50
+[6]: 72
+[7]: 98
+[8]: 128
+[9]: 162
+[10]: 200
+```
+
+---
+
 ## Testing
 
 Each client implementation can be run independently:
@@ -460,6 +719,7 @@ go run cmd/simple/main.go
 go run cmd/waitgroups/main.go
 go run cmd/fanoutin/main.go
 go run cmd/fanoutinwbp/main.go
+go run cmd/pipelines/main.go
 ```
 
 Or run all via the automated script:

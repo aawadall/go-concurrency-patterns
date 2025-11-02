@@ -1,19 +1,19 @@
 # Go Concurrency Patterns
 
-Experimenting with different Golang concurrency patterns 
+Experimenting with different Golang concurrency patterns
 
 ## Patterns
 
-- Simple Wait Groups
-- Fan-Out/Fan-In
-- Back-pressure Signals
-- Pipelines
-- Rate Limiter
-- Select Statement
-- Worker Pools
+- [x] Simple Wait Groups
+- [x] Fan-Out/Fan-In
+- [x] Back-pressure Signals
+- [x] Pipelines
+- [ ] Rate Limiter
+- [ ] Select Statement
+- [ ] Worker Pools
 
-## Useful Objects 
+## Useful Objects
 
-- sync.Cond
-- sync.Once
-- context.Context
+- [ ] sync.Cond
+- [ ] sync.Once
+- [x] context.Context
