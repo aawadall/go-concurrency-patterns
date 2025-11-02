@@ -7,12 +7,12 @@ Experimenting with different Golang concurrency patterns
 - [x] Simple Wait Groups
 - [x] Fan-Out/Fan-In
 - [x] Back-pressure Signals
-- [ ] Pipelines
+- [x] Pipelines
 - [ ] Rate Limiter
 - [ ] Select Statement
 - [ ] Worker Pools
 
-## Useful Objects 
+## Useful Objects
 
 - [ ] sync.Cond
 - [ ] sync.Once
