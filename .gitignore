@@ -1,2 +1,12 @@
 # ignore venv
 venv/
+
+# ignore Python cache files
+__pycache__/
+*.pyc
+
+# ignore Go build files
+bin/
+
+# ignore .claude files
+.claude/
